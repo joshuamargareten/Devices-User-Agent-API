@@ -1,0 +1,14 @@
+{
+  "name": "useragentapi",
+  "version": "1.0.0",
+  "description": "API to get Product Billing Code by Device User Agent",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "author": "Shulem Margareten",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
