@@ -25,11 +25,21 @@
  */
 
 const express = require('express');
+const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: true, limit: '256kb' }));
+// Allow ALL origins (no credentials). Preflight cached for 24h.
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400
+}));
 
+// Make sure preflight never 404s:
+app.options('*', cors());
 
 /* ------------------------------ 1) Billing codes ------------------------------ */
 const BILLING = {
