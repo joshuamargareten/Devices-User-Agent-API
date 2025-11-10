@@ -32,10 +32,10 @@ app.use(express.json({ limit: '256kb' }));
 app.use(express.urlencoded({ extended: true, limit: '256kb' }));
 // Allow ALL origins (no credentials). Preflight cached for 24h.
 app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  maxAge: 86400
+    origin: '*',
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    maxAge: 86400
 }));
 
 // Make sure preflight never 404s:
@@ -163,8 +163,8 @@ const deviceDB = {
         "spa525g2": "Deskphone",
         "spa8800": "ATA SIP Account"
     },
-    "client.webrtc":"Desktop Softphone",
-    "cloudsoftphone":"Smartphone App",
+    "client.webrtc": "Desktop Softphone",
+    "cloudsoftphone": "Smartphone App",
     "connectuc": {
         "mobile": "Smartphone App",
         "web": "Desktop Softphone"
@@ -426,7 +426,8 @@ const NAME_FULL_WORDS = {
     "horn": "Pager",
     "app": "Smartphone App",
     "fpbx": "SIP Trunk",
-    "freepbx": "SIP Trunk"
+    "freepbx": "SIP Trunk",
+    "app": "Smartphone App",
 };
 const NAME_SUBSTRINGS = {
     // Door bells
@@ -475,6 +476,8 @@ const NAME_SUBSTRINGS = {
     "connect web": "Desktop Softphone",
     "connect desktop": "Desktop Softphone",
     "comm.io": "Desktop Softphone",
+    "comm.land": "Desktop Softphone",
+    "desktop": "Desktop Softphone",
     "softphone": "Desktop Softphone",
     "client.webrtc": "Desktop Softphone",
     "dimensions.ucd.uwp": "Desktop Softphone",
@@ -487,6 +490,7 @@ const NAME_SUBSTRINGS = {
     "mobile": "Smartphone App",
     "smartphone": "Smartphone App",
     "cloudsoftphone": "Smartphone App",
+    "callthru.us": "Smartphone App",
 
     // ATA keywords
     "ht801": "ATA SIP Account (Analog Telephone)",
@@ -534,6 +538,10 @@ function narrowCandidates({ platform, device_type, ua, mac, line, device_name })
     const ln = toIntOr(line, 1);
     const macOk = validMac(mac);
 
+    // Begin with EVERYTHING
+    let candidates = new Set(ALL_PRODUCTS);
+    const basis = [`type:${dtype || 'unknown'}`, `mac:${macOk}`, `line:${ln}`];
+
     // SkySwitch: empty UA => not billed
     if (plat === 'skyswitch' && !uastr) {
         return { candidates: [], basis: 'platform:SkySwitch | ua:empty' };
@@ -542,16 +550,18 @@ function narrowCandidates({ platform, device_type, ua, mac, line, device_name })
     // Cellphone/Landline: short-circuit ALWAYS (ignore UA)
     if (dtype === 'cellphone' || dtype === 'landline') {
         return { candidates: ['Cellphone Routing Device'], basis: `type:${dtype}` };
+    } else {
+        candidates.delete("Cellphone Routing Device");
     }
 
     // SIP URI: short-circuit
     if (dtype === 'sip_uri') {
         return { candidates: ['SIP URI'], basis: 'type:sip_uri' };
+    } else {
+        candidates.delete('SIP URI');
     }
 
-    // Begin with EVERYTHING
-    let candidates = new Set(ALL_PRODUCTS);
-    const basis = [`type:${dtype || 'unknown'}`, `mac:${macOk}`, `line:${ln}`];
+    let candidateCountBeforeUA = candidates.size;
 
     // UA -> FAMILY narrows families only
     const fam = uaFamily(uastr);
@@ -613,22 +623,46 @@ function narrowCandidates({ platform, device_type, ua, mac, line, device_name })
         }
     }
 
+    // if no narrowing to candidates happened since uaFamily, check device_type 
+    if (candidates.size === candidateCountBeforeUA && dtype) {
+        if (dtype === 'softphone') {
+            candidates = new Set([...candidates].filter(x => SOFT_VARIANTS.includes(x)));
+            basis.push(`type:${dtype} -> ${[...candidates].join(', ')}`);
+        } else if (dtype === 'smartphone') {
+            candidates = new Set([...candidates].filter(x => SMART_VARIANTS.includes(x)));
+            basis.push(`type:${dtype} -> ${[...candidates].join(', ')}`);
+        } else if (dtype === 'application' || dtype === 'meta') {
+            // UNION, not intersection
+            const union = new Set([
+                ...[...candidates].filter(x => SMART_VARIANTS.includes(x)),
+                ...[...candidates].filter(x => SOFT_VARIANTS.includes(x)),
+            ]);
+            candidates = union.size ? union : candidates;
+            basis.push(`type:${dtype} (union soft+smart) -> ${[...candidates].join(', ')}`);
+        }
+    }
+
+    if (dtype !== 'cellphone' && dtype !== 'landline' && dtype !== 'sip_uri') {
+        candidates.delete('Cellphone Routing Device');
+        candidates.delete('SIP URI');
+    }
+
     return { candidates: [...candidates], basis: basis.join(' | ') };
 }
 
 /* ------------------------------------------------------------- */
 // Helper to get params from req (GET query or POST body)
 function getParams(req) {
-  // accept both query (GET) and body (POST JSON or x-www-form-urlencoded)
-  const src = req.method === 'POST' ? (req.body || {}) : (req.query || {});
-  return {
-    platform: (src.platform ?? '').toString(),
-    device_type: (src.device_type ?? '').toString(),
-    ua: (src.ua ?? '').toString(),
-    mac: (src.mac ?? '').toString(),
-    line: (src.line ?? '').toString(),
-    device_name: (src.device_name ?? '').toString()
-  };
+    // accept both query (GET) and body (POST JSON or x-www-form-urlencoded)
+    const src = req.method === 'POST' ? (req.body || {}) : (req.query || {});
+    return {
+        platform: (src.platform ?? '').toString(),
+        device_type: (src.device_type ?? '').toString(),
+        ua: (src.ua ?? '').toString(),
+        mac: (src.mac ?? '').toString(),
+        line: (src.line ?? '').toString(),
+        device_name: (src.device_name ?? '').toString()
+    };
 }
 
 
@@ -652,19 +686,19 @@ function getParams(req) {
  * }
  */
 app.all('/identify', (req, res) => {
-  try {
-    const { platform, device_type, ua, mac, line, device_name } = getParams(req);
-    const plat = lc(platform || 'kazoo');
-    const { candidates, basis } = narrowCandidates({
-      platform: plat, device_type, ua, mac, line, device_name
-    });
-    const fam = uaFamily(ua);
-    const codeMap = (plat === 'skyswitch') ? BILLING.skyswitch : BILLING.kazoo;
-    const out = candidates.map(product => ({ product, code: codeMap[product] || "" }));
-    res.json({ platform: plat, family: fam, candidates: out, basis });
-  } catch (e) {
-    res.status(500).json({ error: 'Internal Server Error', details: String(e?.message || e) });
-  }
+    try {
+        const { platform, device_type, ua, mac, line, device_name } = getParams(req);
+        const plat = lc(platform || 'kazoo');
+        const { candidates, basis } = narrowCandidates({
+            platform: plat, device_type, ua, mac, line, device_name
+        });
+        const fam = uaFamily(ua);
+        const codeMap = (plat === 'skyswitch') ? BILLING.skyswitch : BILLING.kazoo;
+        const out = candidates.map(product => ({ product, code: codeMap[product] || "" }));
+        res.json({ platform: plat, family: fam, candidates: out, basis });
+    } catch (e) {
+        res.status(500).json({ error: 'Internal Server Error', details: String(e?.message || e) });
+    }
 });
 
 /* health */
